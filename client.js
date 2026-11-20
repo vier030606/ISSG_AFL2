@@ -1,5 +1,6 @@
 const io = require("socket.io-client");
 const readline = require("readline");
+const crypto = require("crypto");
 
 const socket = io("http://localhost:3000");
 
@@ -11,6 +12,11 @@ const rl = readline.createInterface({
 
 let username = "";
 
+// Helper function to generate SHA-256 hash
+function generateHash(text) {
+    return crypto.createHash("sha256").update(text).digest("hex");
+}
+
 socket.on("connect", () => {
     console.log("Connected to the server");
 
@@ -21,7 +27,8 @@ socket.on("connect", () => {
 
         rl.on("line", (message) => {
             if (message.trim()) {
-                socket.emit("message", { username, message });
+                const hash = generateHash(message);
+                socket.emit("message", { username, message, hash });
             }
             rl.prompt();
         });
@@ -29,8 +36,16 @@ socket.on("connect", () => {
 });
 
 socket.on("message", (data) => {
-    const { username: senderUsername, message: senderMessage } = data;
+    const { username: senderUsername, message: senderMessage, hash: senderHash } = data;
+
     if (senderUsername !== username) {
+        // Recompute the hash from the received message
+        const expectedHash = generateHash(senderMessage);
+
+        if (senderHash !== expectedHash) {
+            console.log(`⚠️ WARNING: Message from ${senderUsername} may have been tampered with during transmission!`);
+        }
+
         console.log(`${senderUsername}: ${senderMessage}`);
         rl.prompt();
     }
