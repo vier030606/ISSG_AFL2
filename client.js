@@ -10,7 +10,7 @@ const rl = readline.createInterface({
     prompt: "> ",
 });
 
-let registeredUsername = "";
+let targetUsername = "";
 let username = "";
 const users = new Map();
 
@@ -26,10 +26,9 @@ socket.on("connect", () => {
 
     rl.question("Enter your username: ", (input) => {
         username = input;
-        registeredUsername = input;
         console.log(`Welcome, ${username} to the chat`);
 
-        // Send the client's actual RSA public key to the server
+        // Register this client's real public key with the server
         socket.emit("registerPublicKey", {
             username,
             publicKey,
@@ -39,19 +38,38 @@ socket.on("connect", () => {
         rl.on("line", (message) => {
             if (message.trim()) {
                 let match;
-                if ((match = message.match(/^!impersonate (\w+)$/))) {
-                    username = match[1];
-                    console.log(`Now impersonating as ${username}`);
+                if ((match = message.match(/^!secret (\w+)$/))) {
+                    const target = match[1];
+                    if (users.has(target)) {
+                        targetUsername = target;
+                        console.log(`Now secretly chatting with ${targetUsername}`);
+                    } else {
+                        console.log(`User "${target}" not found in chat.`);
+                    }
                 } else if (message.match(/^!exit$/)) {
-                    username = registeredUsername;
-                    console.log(`Now you are ${username}`);
+                    console.log(`No more secretly chatting with ${targetUsername}`);
+                    targetUsername = "";
                 } else {
-                    // Sign the message using this client's private key
-                    const signature = crypto
-                        .sign("sha256", Buffer.from(message), privateKey)
-                        .toString("hex");
+                    // If a secret target is set, encrypt the message with the target's public key
+                    if (targetUsername) {
+                        const targetPublicKey = users.get(targetUsername);
+                        const encryptedMessage = crypto
+                            .publicEncrypt(targetPublicKey, Buffer.from(message))
+                            .toString("hex");
 
-                    socket.emit("message", { username, message, signature });
+                        socket.emit("message", {
+                            username,
+                            message: encryptedMessage,
+                            isSecret: true,
+                        });
+                    } else {
+                        // Normal unencrypted message
+                        socket.emit("message", {
+                            username,
+                            message,
+                            isSecret: false,
+                        });
+                    }
                 }
             }
             rl.prompt();
@@ -73,34 +91,25 @@ socket.on("newUser", (data) => {
 });
 
 socket.on("message", (data) => {
-    const { username: senderUsername, message: senderMessage, signature } = data;
-    const senderPublicKey = users.get(senderUsername);
+    const { username: senderUsername, message: senderMessage, isSecret } = data;
 
-    let isVerified = false;
-    if (senderPublicKey && signature) {
-        try {
-            isVerified = crypto.verify(
-                "sha256",
-                Buffer.from(senderMessage),
-                senderPublicKey,
-                Buffer.from(signature, "hex")
-            );
-        } catch (err) {
-            isVerified = false;
+    if (senderUsername !== username) {
+        if (isSecret) {
+            try {
+                // Attempt to decrypt with this client's private key
+                const decryptedMessage = crypto
+                    .privateDecrypt(privateKey, Buffer.from(senderMessage, "hex"))
+                    .toString("utf8");
+                console.log(`${senderUsername} (secret): ${decryptedMessage}`);
+            } catch (err) {
+                // If decryption fails, this client is NOT the intended target—display ciphertext gibberish
+                console.log(`${senderUsername}: ${senderMessage}`);
+            }
+        } else {
+            console.log(`${senderUsername}: ${senderMessage}`);
         }
+        rl.prompt();
     }
-
-    // Ignore our own genuine messages, but DO NOT ignore someone impersonating us!
-    if (senderUsername === registeredUsername && isVerified) {
-        return;
-    }
-
-    if (!isVerified) {
-        console.log(`⚠️ WARNING: This user is fake! (${senderUsername})`);
-    }
-
-    console.log(`${senderUsername}: ${senderMessage}`);
-    rl.prompt();
 });
 
 socket.on("disconnect", () => {

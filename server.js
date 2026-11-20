@@ -20,8 +20,8 @@ io.on("connection", (socket) => {
     });
 
     socket.on("message", (data) => {
-        const { username, message, signature } = data;
-        io.emit("message", { username, message, signature });
+        const { username, message, isSecret } = data;
+        io.emit("message", { username, message, isSecret });
     });
 
     socket.on("disconnect", () => {
